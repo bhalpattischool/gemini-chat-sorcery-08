@@ -17,7 +17,8 @@ interface NotificationContextType {
   testNotificationSystem: () => Promise<boolean>;
 }
 
-const NotificationContext = createContext<NotificationContextType | undefined>(undefined);
+// Export the context so it can be imported directly
+export const NotificationContext = createContext<NotificationContextType | undefined>(undefined);
 
 export const useNotifications = () => {
   const context = useContext(NotificationContext);
