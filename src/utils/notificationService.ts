@@ -1,4 +1,3 @@
-
 /**
  * A unified notification service that works across web browsers and WebView
  * Enhanced with better fallbacks and reliability for APK environments
@@ -10,6 +9,7 @@ export interface NotificationData {
   message: string;
   icon?: string;
   duration?: number;
+  showBanner?: boolean; // Add flag to control toast display
 }
 
 // Keep track of active notifications
@@ -195,14 +195,20 @@ const generateNotificationId = (data: NotificationData): string => {
 
 // Show a notification using the best available method
 export const showNotification = async (data: NotificationData): Promise<void> => {
+  // Set default value for showBanner if not provided
+  const notificationData = {
+    ...data,
+    showBanner: data.showBanner !== false, // Default to true if not specified
+  };
+
   // Generate a unique ID for this notification
-  const notificationId = generateNotificationId(data);
+  const notificationId = generateNotificationId(notificationData);
   
   // Check if this notification was previously attempted and failed
   const wasFailedPreviously = failedNotifications.has(notificationId);
   
   // Add to active notifications
-  activeNotifications.push(data);
+  activeNotifications.push(notificationData);
   
   // Always attempt to play sound first
   const soundPlayed = await playNotificationSound();
@@ -216,7 +222,7 @@ export const showNotification = async (data: NotificationData): Promise<void> =>
       console.log('Using Android WebView bridge for notification');
       
       try {
-        window.Android.showNotification(data.title, data.message);
+        window.Android.showNotification(notificationData.title, notificationData.message);
         // If we get here, the native call succeeded
         failedNotifications.delete(notificationId);
         return;
@@ -231,13 +237,13 @@ export const showNotification = async (data: NotificationData): Promise<void> =>
     if (canUseSystemNotifications) {
       try {
         console.log('Using browser notification API');
-        const notification = new Notification(data.title, {
-          body: data.message,
-          icon: data.icon || '/notification-icon.png'
+        const notification = new Notification(notificationData.title, {
+          body: notificationData.message,
+          icon: notificationData.icon || '/notification-icon.png'
         });
         
         // Auto-close the notification after duration or default (5 seconds)
-        setTimeout(() => notification.close(), data.duration || 5000);
+        setTimeout(() => notification.close(), notificationData.duration || 5000);
         
         // Mark as succeeded
         failedNotifications.delete(notificationId);
@@ -267,7 +273,7 @@ export const showNotification = async (data: NotificationData): Promise<void> =>
         // Only retry if still in failed set
         if (failedNotifications.has(notificationId)) {
           console.log('Auto-retrying failed notification');
-          showNotification(data).catch(console.error);
+          showNotification(notificationData).catch(console.error);
         }
       }, 1000);
     }

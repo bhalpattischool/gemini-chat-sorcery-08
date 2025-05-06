@@ -1,5 +1,5 @@
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef } from 'react';
 import { Bell } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { 
@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/popover";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { useNotifications } from '@/hooks/useNotifications';
+import { useNotifications } from '@/contexts/NotificationContext';
 import { cn } from "@/lib/utils";
 
 interface NotificationBellProps {
@@ -18,8 +18,16 @@ interface NotificationBellProps {
 
 const NotificationBell: React.FC<NotificationBellProps> = ({ className }) => {
   const [isOpen, setIsOpen] = useState(false);
-  const { notifications, markAllAsRead } = useNotifications();
-  const unreadCount = notifications.filter(n => !n.read).length;
+  const { notifications, dismissNotification } = useNotifications();
+  
+  // Mark notifications as read (to be implemented)
+  const markAllAsRead = () => {
+    // Currently, we simply dismiss all notifications
+    notifications.forEach((_, index) => dismissNotification(index));
+  };
+  
+  // Get count of unread notifications
+  const unreadCount = notifications.length;
   
   // Close popover when clicking outside
   const handleOpenChange = (open: boolean) => {
@@ -79,26 +87,20 @@ const NotificationBell: React.FC<NotificationBellProps> = ({ className }) => {
             </div>
           ) : (
             <div className="divide-y divide-gray-100 dark:divide-gray-800">
-              {notifications.map((notification) => (
+              {notifications.map((notification, index) => (
                 <div 
-                  key={notification.id}
-                  className={cn(
-                    "p-3 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors",
-                    !notification.read && "bg-purple-50 dark:bg-purple-900/10"
-                  )}
+                  key={`bell-notification-${index}`}
+                  className="p-3 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors bg-purple-50 dark:bg-purple-900/10"
                 >
                   <div className="flex items-start gap-2">
-                    <div className={cn(
-                      "w-2 h-2 rounded-full mt-2",
-                      notification.read ? "bg-gray-300 dark:bg-gray-600" : "bg-purple-500"
-                    )} />
+                    <div className="w-2 h-2 rounded-full mt-2 bg-purple-500" />
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium">{notification.title}</p>
                       <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
                         {notification.message}
                       </p>
                       <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
-                        {formatTime(notification.timestamp)}
+                        Just now
                       </p>
                     </div>
                   </div>
@@ -120,36 +122,6 @@ const NotificationBell: React.FC<NotificationBellProps> = ({ className }) => {
       </PopoverContent>
     </Popover>
   );
-};
-
-// Helper function to format timestamps
-const formatTime = (timestamp: number): string => {
-  const now = Date.now();
-  const diff = now - timestamp;
-  
-  // Less than 1 minute
-  if (diff < 60000) return 'Just now';
-  
-  // Less than 1 hour
-  if (diff < 3600000) {
-    const minutes = Math.floor(diff / 60000);
-    return `${minutes} minute${minutes > 1 ? 's' : ''} ago`;
-  }
-  
-  // Less than 1 day
-  if (diff < 86400000) {
-    const hours = Math.floor(diff / 3600000);
-    return `${hours} hour${hours > 1 ? 's' : ''} ago`;
-  }
-  
-  // More than 1 day
-  const days = Math.floor(diff / 86400000);
-  if (days < 7) {
-    return `${days} day${days > 1 ? 's' : ''} ago`;
-  }
-  
-  // Default: show the date
-  return new Date(timestamp).toLocaleDateString();
 };
 
 export default NotificationBell;

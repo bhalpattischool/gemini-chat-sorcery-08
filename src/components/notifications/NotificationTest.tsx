@@ -7,6 +7,7 @@ import { Switch } from "@/components/ui/switch";
 import { toast } from "@/hooks/use-toast";
 import { useNotifications } from '@/contexts/NotificationContext';
 import { ensureNotificationsReady } from '@/utils/notificationService';
+import { Bell, BellRing } from 'lucide-react';
 
 const NotificationTest: React.FC = () => {
   const { showNotification, testNotificationSystem } = useNotifications();
@@ -14,6 +15,7 @@ const NotificationTest: React.FC = () => {
   const [message, setMessage] = useState<string>('This is a test notification to verify the system is working.');
   const [duration, setDuration] = useState<number>(5000);
   const [isSending, setIsSending] = useState<boolean>(false);
+  const [showBanner, setShowBanner] = useState<boolean>(true);
   
   const handleSendNotification = async () => {
     try {
@@ -22,10 +24,12 @@ const NotificationTest: React.FC = () => {
       // Ensure notification system is ready
       ensureNotificationsReady();
       
+      // Send notification which will show as both toast and bell notification
       await showNotification({
         title,
         message,
-        duration
+        duration,
+        showBanner, // Pass this to control toast display
       });
       
       toast({
@@ -116,21 +120,38 @@ const NotificationTest: React.FC = () => {
         />
       </div>
       
+      <div className="flex items-center space-x-2">
+        <Switch 
+          id="showBanner" 
+          checked={showBanner} 
+          onCheckedChange={setShowBanner} 
+        />
+        <label htmlFor="showBanner" className="text-sm font-medium">
+          Show as banner notification
+        </label>
+      </div>
+      
       <div className="flex flex-col sm:flex-row gap-3">
         <Button 
           onClick={handleSendNotification} 
           disabled={isSending || !title || !message}
-          className="flex-1"
+          className="flex-1 flex items-center gap-2"
         >
-          {isSending ? 'Sending...' : 'Send Custom Notification'}
+          {isSending ? 'Sending...' : (
+            <>
+              <BellRing className="h-4 w-4" />
+              Send Custom Notification
+            </>
+          )}
         </Button>
         
         <Button
           onClick={handleQuickTest}
           variant="outline"
           disabled={isSending}
-          className="flex-1"
+          className="flex-1 flex items-center gap-2"
         >
+          <Bell className="h-4 w-4" />
           Quick Test
         </Button>
       </div>

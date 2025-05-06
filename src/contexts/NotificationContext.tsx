@@ -7,6 +7,7 @@ import {
   showNotification as showNotificationService,
   ensureNotificationsReady
 } from '@/utils/notificationService';
+import { toast } from "@/hooks/use-toast";
 
 interface NotificationContextType {
   notifications: NotificationData[];
@@ -77,7 +78,16 @@ export const NotificationProvider: React.FC<NotificationProviderProps> = ({ chil
   }, [notifications, isInitialized]);
 
   const showNotification = async (data: NotificationData) => {
+    // Add to notification service
     await showNotificationService(data);
+    
+    // Also show as toast notification
+    toast({
+      title: data.title,
+      description: data.message,
+      duration: data.duration || 5000
+    });
+    
     // The notification will be added to active notifications in the service
     // Our useEffect will pick it up and update the state
   };
@@ -121,4 +131,3 @@ export const NotificationProvider: React.FC<NotificationProviderProps> = ({ chil
     </NotificationContext.Provider>
   );
 };
-
