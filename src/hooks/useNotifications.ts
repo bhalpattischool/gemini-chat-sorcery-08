@@ -1,6 +1,11 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { onMessage } from '@/lib/firebase';
+import { 
+  showNotification as showNotificationService,
+  ensureNotificationsReady,
+  testNotification
+} from '@/utils/notificationService';
 
 // Define the notification type
 export interface Notification {
@@ -9,11 +14,11 @@ export interface Notification {
   message: string;
   read: boolean;
   timestamp: number;
-  type?: 'group' | 'message' | 'system'; // Added type property
-  groupId?: string; // Added groupId property
-  chatId?: string; // Added chatId property
-  senderName?: string; // Added senderName property
-  isRead?: boolean; // For compatibility with existing code
+  type?: 'group' | 'message' | 'system'; 
+  groupId?: string;
+  chatId?: string;
+  senderName?: string;
+  isRead?: boolean;
 }
 
 // Sample notifications for demonstration
@@ -81,6 +86,15 @@ export function useNotifications() {
   
   // Track processed message IDs to prevent duplicate notifications
   const processedMessageIdsRef = useRef<Set<string>>(new Set());
+  
+  // Counter for message reconnection attempts
+  const reconnectCountRef = useRef(0);
+  
+  // Track notifications that came in while app was in background
+  const pendingNotificationsRef = useRef<Notification[]>([]);
+  
+  // Track app visibility state
+  const isAppVisibleRef = useRef(true);
 
   // Save notifications to localStorage whenever they change
   useEffect(() => {
@@ -115,7 +129,58 @@ export function useNotifications() {
     
     return () => clearInterval(cleanup);
   }, []);
+  
+  // Monitor app visibility
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      const isVisible = document.visibilityState === 'visible';
+      
+      if (isVisible && !isAppVisibleRef.current) {
+        // App has become visible after being hidden
+        console.log('App is now visible - ensuring notifications are ready');
+        ensureNotificationsReady();
+        
+        // Process any pending notifications
+        if (pendingNotificationsRef.current.length > 0) {
+          console.log('Processing pending notifications:', pendingNotificationsRef.current.length);
+          
+          setNotifications(prev => [
+            ...pendingNotificationsRef.current,
+            ...prev
+          ]);
+          
+          pendingNotificationsRef.current = [];
+        }
+      }
+      
+      isAppVisibleRef.current = isVisible;
+    };
+    
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    
+    // Initialize
+    ensureNotificationsReady();
+    
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, []);
 
+  // Generate a more reliable unique ID for notifications
+  const generateMessageId = useCallback((messageInfo: any): string => {
+    // Include multiple fields to make the ID more unique
+    const baseString = `${messageInfo.chatId}-${messageInfo.sender}-${messageInfo.text}`;
+    
+    // Add hash of the text for better uniqueness (simple implementation)
+    let hash = 0;
+    for (let i = 0; i < messageInfo.text.length; i++) {
+      hash = ((hash << 5) - hash) + messageInfo.text.charCodeAt(i);
+      hash |= 0; // Convert to 32bit integer
+    }
+    
+    return `${baseString}-${hash}-time-${Date.now()}`;
+  }, []);
+  
   // Setup message listener function with retry logic
   const setupMessageListener = useCallback(() => {
     try {
@@ -128,7 +193,7 @@ export function useNotifications() {
       
       const unsubscribe = onMessage((messageInfo) => {
         // Generate a unique ID for this message
-        const uniqueId = `${messageInfo.chatId}-${messageInfo.text}-time-${Date.now()}`;
+        const uniqueId = generateMessageId(messageInfo);
         
         // Check if we've already processed this exact message recently
         if (processedMessageIdsRef.current.has(uniqueId)) {
@@ -143,7 +208,7 @@ export function useNotifications() {
         console.log("Received message notification:", messageInfo);
         
         const newNotification: Notification = {
-          id: `msg_${Date.now()}`,
+          id: `msg_${Date.now()}${Math.random().toString(36).substring(2, 8)}`,
           title: messageInfo.isGroup 
             ? `${messageInfo.groupName || 'Group'}: ${messageInfo.senderName || 'Someone'}`
             : `${messageInfo.senderName || 'Someone'}`,
@@ -156,10 +221,17 @@ export function useNotifications() {
           senderName: messageInfo.senderName
         };
         
-        addNotification(newNotification);
+        // If app is visible, add notification normally
+        if (isAppVisibleRef.current) {
+          addNotification(newNotification);
+        } else {
+          // Store notification for when app becomes visible again
+          console.log('App is in background, storing notification for later');
+          pendingNotificationsRef.current.push(newNotification);
+        }
         
         // Reset retry counter on successful message
-        retryCountRef.current = 0;
+        reconnectCountRef.current = 0;
       });
       
       unsubscribeRef.current = unsubscribe;
@@ -169,15 +241,15 @@ export function useNotifications() {
       console.error('Error setting up message listener:', err);
       return null;
     }
-  }, []);
+  }, [generateMessageId]);
 
   // Function to add a notification
-  const addNotification = useCallback((notification: Omit<Notification, 'id' | 'timestamp' | 'read'>) => {
+  const addNotification = useCallback((notification: Omit<Notification, 'id' | 'timestamp' | 'read'> & { id?: string, timestamp?: number, read?: boolean }) => {
     const newNotification: Notification = {
-      id: `manual_${Date.now()}`,
+      id: notification.id || `manual_${Date.now()}${Math.random().toString(36).substring(2, 8)}`,
       ...notification,
-      read: false,
-      timestamp: Date.now()
+      read: notification.read !== undefined ? notification.read : false,
+      timestamp: notification.timestamp || Date.now()
     };
     
     setNotifications(prev => {
@@ -185,11 +257,12 @@ export function useNotifications() {
       const isDuplicate = prev.some(n => 
         n.message === newNotification.message && 
         n.type === newNotification.type && 
-        n.timestamp > newNotification.timestamp - 5000
+        (n.timestamp > newNotification.timestamp - 5000 || 
+         n.id === newNotification.id)
       );
       
       if (isDuplicate) {
-        console.log("Ignoring duplicate notification");
+        console.log("Ignoring duplicate notification in addNotification");
         return prev;
       }
       
@@ -200,25 +273,27 @@ export function useNotifications() {
     if (playSound) {
       try {
         // Use the notificationService to play sound (it has better error handling)
-        import('@/utils/notificationService').then(notificationService => {
-          const data = {
-            title: notification.title || 'Notification',
-            message: notification.message
-          };
-          notificationService.showNotification(data);
-        }).catch(err => {
-          console.error('Failed to import notification service:', err);
-          // Fallback
-          const audio = new Audio('/notification-sound.mp3');
-          audio.volume = 0.7;
-          audio.play().catch(err => {
-            console.error('Failed to play notification sound:', err);
+        const data = {
+          title: notification.title || 'Notification',
+          message: notification.message
+        };
+        showNotificationService(data)
+          .catch(err => {
+            console.error('Failed to show notification:', err);
+            
+            // Fallback to direct audio play if service fails
+            const audio = new Audio('/notification-sound.mp3');
+            audio.volume = 0.7;
+            audio.play().catch(err => {
+              console.error('Failed to play notification sound:', err);
+            });
           });
-        });
       } catch (err) {
         console.error('Failed to play notification sound:', err);
       }
     }
+    
+    return newNotification.id;
   }, [playSound]);
 
   // Listen for new messages from Firebase for real-time notifications
@@ -228,26 +303,58 @@ export function useNotifications() {
         const unsubscribe = setupMessageListener();
         
         if (!unsubscribe) {
-          // Retry setup if it failed
-          if (retryCountRef.current < 3) {
-            console.log(`Retrying message listener setup (${retryCountRef.current + 1}/3)...`);
-            retryCountRef.current += 1;
+          // Retry setup if it failed with exponential backoff
+          if (reconnectCountRef.current < 5) {
+            console.log(`Retrying message listener setup (${reconnectCountRef.current + 1}/5)...`);
+            
+            const delay = Math.min(30000, Math.pow(2, reconnectCountRef.current) * 1000);
+            console.log(`Will retry in ${delay}ms`);
+            
+            reconnectCountRef.current += 1;
             
             retryTimeoutRef.current = setTimeout(() => {
               setupListener();
-            }, 2000 * retryCountRef.current); // Exponential backoff
+            }, delay);
           } else {
             console.error("Failed to set up message listener after multiple retries");
+            
+            // Reset counter but wait longer before trying again
+            reconnectCountRef.current = 0;
+            
+            retryTimeoutRef.current = setTimeout(() => {
+              console.log("Making one more attempt to reconnect after extended delay");
+              setupListener();
+            }, 60000); // Try one more time after a minute
           }
         } else {
           // Reset retry counter on successful setup
-          retryCountRef.current = 0;
+          reconnectCountRef.current = 0;
+          
+          // Periodically check if listener is still working
+          const checkInterval = setInterval(() => {
+            // Test notification system health every 5 minutes
+            testNotification()
+              .then(success => {
+                if (!success) {
+                  console.warn('Notification health check failed, reconnecting...');
+                  setupListener();
+                }
+              })
+              .catch(() => {
+                // If test throws, force reconnect
+                setupListener();
+              });
+          }, 5 * 60 * 1000); // Check every 5 minutes
+          
+          // Clean up check interval when unmounting
+          return () => clearInterval(checkInterval);
         }
       } catch (error) {
         console.error("Error in setupListener:", error);
       }
     };
     
+    // Start the setup process
     setupListener();
     
     // Clean up listener when component unmounts
@@ -285,6 +392,21 @@ export function useNotifications() {
   const clearNotifications = useCallback(() => {
     setNotifications([]);
   }, []);
+  
+  // Test the notification system manually
+  const testNotificationSystem = useCallback(() => {
+    const testNotification: Notification = {
+      id: `test_${Date.now()}`,
+      title: 'Notification Test',
+      message: 'This is a test notification to verify the system is working.',
+      read: false,
+      timestamp: Date.now(),
+      type: 'system'
+    };
+    
+    addNotification(testNotification);
+    return testNotification.id;
+  }, [addNotification]);
 
   return {
     notifications,
@@ -294,6 +416,7 @@ export function useNotifications() {
     removeNotification,
     clearNotifications,
     playSound,
-    setPlaySound
+    setPlaySound,
+    testNotificationSystem
   };
 }

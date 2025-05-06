@@ -4,14 +4,16 @@ import {
   NotificationData, 
   getActiveNotifications, 
   clearNotification,
-  showNotification as showNotificationService
+  showNotification as showNotificationService,
+  ensureNotificationsReady
 } from '@/utils/notificationService';
 
 interface NotificationContextType {
   notifications: NotificationData[];
-  showNotification: (data: NotificationData) => void;
+  showNotification: (data: NotificationData) => Promise<void>;
   dismissNotification: (index: number) => void;
   dismissAllNotifications: () => void;
+  testNotificationSystem: () => Promise<boolean>;
 }
 
 const NotificationContext = createContext<NotificationContextType | undefined>(undefined);
@@ -30,12 +32,21 @@ interface NotificationProviderProps {
 
 export const NotificationProvider: React.FC<NotificationProviderProps> = ({ children }) => {
   const [notifications, setNotifications] = useState<NotificationData[]>([]);
+  const [isInitialized, setIsInitialized] = useState(false);
 
   // Initialize notifications and request permission
   useEffect(() => {
-    // Initial setup and permission request
-    if ('Notification' in window && Notification.permission !== "granted") {
-      Notification.requestPermission();
+    // Initial setup
+    if (!isInitialized) {
+      // Ensure notification system is ready
+      ensureNotificationsReady();
+      
+      // Request permission for browser notifications
+      if ('Notification' in window && Notification.permission !== "granted") {
+        Notification.requestPermission();
+      }
+      
+      setIsInitialized(true);
     }
     
     // Poll for active notifications from service
@@ -46,8 +57,24 @@ export const NotificationProvider: React.FC<NotificationProviderProps> = ({ chil
       }
     }, 500);
 
-    return () => clearInterval(interval);
-  }, [notifications]);
+    // Handle visibility change
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        // When app becomes visible, ensure notifications are ready
+        ensureNotificationsReady();
+        
+        // Force refresh of notifications
+        setNotifications(getActiveNotifications());
+      }
+    };
+    
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [notifications, isInitialized]);
 
   const showNotification = async (data: NotificationData) => {
     await showNotificationService(data);
@@ -63,15 +90,35 @@ export const NotificationProvider: React.FC<NotificationProviderProps> = ({ chil
   const dismissAllNotifications = () => {
     setNotifications([]);
   };
+  
+  const testNotificationSystem = async () => {
+    try {
+      // Create a test notification
+      const testData: NotificationData = {
+        title: 'Test Notification',
+        message: 'Testing the notification system',
+        duration: 3000
+      };
+      
+      // Show the notification
+      await showNotification(testData);
+      return true;
+    } catch (error) {
+      console.error('Test notification failed:', error);
+      return false;
+    }
+  };
 
   return (
     <NotificationContext.Provider value={{
       notifications,
       showNotification,
       dismissNotification,
-      dismissAllNotifications
+      dismissAllNotifications,
+      testNotificationSystem
     }}>
       {children}
     </NotificationContext.Provider>
   );
 };
+
